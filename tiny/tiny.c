@@ -23,19 +23,27 @@ int main(int argc, char **argv)
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
-
+    //printf("argc : %d", argc);
     /* Check command line args */
     if (argc != 2) {
 	fprintf(stderr, "usage: %s <port>\n", argv[0]);
 	exit(1);
     }
-
+    
     listenfd = Open_listenfd(argv[1]);
     while (1) {
 	clientlen = sizeof(clientaddr);
+    //printf("befre accept clientaddr : %d\n", clientaddr);
 	connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
+    //여기서 요청 들어올 때까지 기다리고 있음. 무한루프 계속 반복하지 않는다.
+    //printf("after accept clientaddr : %d\n", clientaddr.ss_family);
+    //printf("after accept clientaddr : %d\n", clientaddr.__ss_align);
+    //printf("after accept clientaddr : %d\n", clientaddr.__ss_padding);
+        //printf("\n\n\nbefore hostname : %s\n\n\n", hostname);
+        //Get hostname, port from received IP
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
                     port, MAXLINE, 0);
+        //printf("\n\n\nafter hostname : %s\n\n\n", hostname);
         printf("Accepted connection from (%s, %s)\n", hostname, port);
 	doit(connfd);                                             //line:netp:tiny:doit
 	Close(connfd);                                            //line:netp:tiny:close
@@ -56,31 +64,42 @@ void doit(int fd)
     rio_t rio;
 
     /* Read request line and headers */
-    Rio_readinitb(&rio, fd);
+    printf("fd : %d\n", fd);
+    Rio_readinitb(&rio, fd); // rio.rio_fd = fd
+    printf("rio_fd : %d\n", rio.rio_fd);
     if (!Rio_readlineb(&rio, buf, MAXLINE))  //line:netp:doit:readrequest
         return;
-    printf("%s", buf);
+    /*for (int i=0; i<5; i++){
+        sleep(1);
+        printf("sleeping : %d\n", i);
+    }*/
+    printf("Request Headers : %s", buf); // GET /godzilla.gif HTTP/1.1
     sscanf(buf, "%s %s %s", method, uri, version);       //line:netp:doit:parserequest
     if (strcasecmp(method, "GET")) {                     //line:netp:doit:beginrequesterr
         clienterror(fd, method, "501", "Not Implemented",
                     "Tiny does not implement this method");
         return;
     }                                                    //line:netp:doit:endrequesterr
+    //read_requesthdrs : buf 내용 중 첫줄만 읽어오고, 나머지는 출력만 한다.
     read_requesthdrs(&rio);                              //line:netp:doit:readrequesthdrs
 
     /* Parse URI from GET request */
+    //정적 컨텐츠를 요청하는지 여부 확인한다
     is_static = parse_uri(uri, filename, cgiargs);       //line:netp:doit:staticcheck
+    //filename = ./godzilla.gif
+    //파일에 대한 정보를 sbuf에 저장한다.
     if (stat(filename, &sbuf) < 0) {                     //line:netp:doit:beginnotfound
 	clienterror(fd, filename, "404", "Not found",
 		    "Tiny couldn't find this file");
 	return;
     }                                                    //line:netp:doit:endnotfound
 
-    if (is_static) { /* Serve static content */          
-	if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { //line:netp:doit:readable
-	    clienterror(fd, filename, "403", "Forbidden",
-			"Tiny couldn't read the file");
-	    return;
+    if (is_static) { /* Serve static content */  
+        //제대로 된 파일인지 || 접근 권한이 있는지 판단한다.   
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { //line:netp:doit:readable
+            clienterror(fd, filename, "403", "Forbidden",
+                "Tiny couldn't read the file");
+            return;
 	}
 	serve_static(fd, filename, sbuf.st_size);        //line:netp:doit:servestatic
     }
@@ -104,10 +123,10 @@ void read_requesthdrs(rio_t *rp)
     char buf[MAXLINE];
 
     Rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
+    printf("%s\n", buf);
     while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
 	Rio_readlineb(rp, buf, MAXLINE);
-	printf("%s", buf);
+	printf("%s\n", buf);
     }
     return;
 }
@@ -125,7 +144,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
     if (!strstr(uri, "cgi-bin")) {  /* Static content */ //line:netp:parseuri:isstatic
 	strcpy(cgiargs, "");                             //line:netp:parseuri:clearcgi
 	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert1
-	strcat(filename, uri);                           //line:netp:parseuri:endconvert1
+	strcat(filename, uri); //./godzilla.gif         //line:netp:parseuri:endconvert1
 	if (uri[strlen(uri)-1] == '/')                   //line:netp:parseuri:slashcheck
 	    strcat(filename, "home.html");               //line:netp:parseuri:appenddefault
 	return 1;
@@ -166,7 +185,9 @@ void serve_static(int fd, char *filename, int filesize)
     Rio_writen(fd, buf, strlen(buf));    //line:netp:servestatic:endserve
 
     /* Send response body to client */
+    //읽기 전용으로 srcfd을 연다.
     srcfd = Open(filename, O_RDONLY, 0); //line:netp:servestatic:open
+    //이미지 파일의 경우는 빠르게 수행하기 위해 mmap을 쓴다.
     srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); //line:netp:servestatic:mmap
     Close(srcfd);                       //line:netp:servestatic:close
     Rio_writen(fd, srcp, filesize);     //line:netp:servestatic:write

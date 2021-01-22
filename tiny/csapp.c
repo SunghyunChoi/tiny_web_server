@@ -1004,13 +1004,13 @@ int open_listenfd(char *port)
     hints.ai_socktype = SOCK_STREAM;             /* Accept connections */
     hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG; /* ... on any IP address */
     hints.ai_flags |= AI_NUMERICSERV;            /* ... using port number */
-    if ((rc = getaddrinfo("www.naver.com", port, NULL, &listp)) != 0) {
+    if ((rc = getaddrinfo(NULL, port, &hints, &listp)) != 0) {
         fprintf(stderr, "getaddrinfo failed (port %s): %s\n", port, gai_strerror(rc));
         return -2;
     }
     /* Walk the list for one that we can bind to */
     for (p = listp; p; p = p->ai_next) {
-        
+        /*
         printf("p->ai_flags : %d\n", p->ai_flags);
         printf("p->ai_addr : %p\n", p->ai_addr);
         printf("p->ai_family : %d\n", p->ai_family);
@@ -1018,10 +1018,10 @@ int open_listenfd(char *port)
         printf("p->ai_socktype : %d\n", p->ai_socktype);
         printf("p->ai_canonname : %s\n", p->ai_canonname);
         printf("p->ai_next : %p\n", p->ai_next);
-        
+        */
         /* Create a socket descriptor */
         if ((listenfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0){ 
-            printf("1 failed\n");
+            //printf("1 failed\n");
             continue;}         /* Socket failed, try the next */
         /* Eliminates "Address already in use" error from bind */
         setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR,    //line:netp:csapp:setsockopt
@@ -1029,8 +1029,8 @@ int open_listenfd(char *port)
 
         /* Bind the descriptor to the address */
         if (bind(listenfd, p->ai_addr, p->ai_addrlen) == 0)
-            printf("2 failed\n");
-            //break; /* Success */
+            //printf("2 failed\n");
+            break; /* Success */
         if (close(listenfd) < 0) { /* Bind failed, try the next */
             fprintf(stderr, "open_listenfd close failed: %s\n", strerror(errno));
             return -1;
@@ -1041,12 +1041,12 @@ int open_listenfd(char *port)
     /* Clean up */
     freeaddrinfo(listp);
     if (!p) /* No address worked */{
-        printf("3 failed\n");
+        //printf("3 failed\n");
         return -1;}
 
     /* Make it a listening socket ready to accept connection requests */
     if (listen(listenfd, LISTENQ) < 0) {
-        printf("4 failed\n");
+        //printf("4 failed\n");
         close(listenfd);
 	    return -1;
     }
