@@ -11,7 +11,7 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, char* method);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, 
@@ -75,7 +75,7 @@ void doit(int fd)
     }*/
     printf("Request Headers : %s", buf); // GET /godzilla.gif HTTP/1.1
     sscanf(buf, "%s %s %s", method, uri, version);       //line:netp:doit:parserequest
-    if (strcasecmp(method, "GET")) {                     //line:netp:doit:beginrequesterr
+    if ((strcasecmp(method, "GET")) && (strcasecmp(method, "HEAD"))){                     //line:netp:doit:beginrequesterr
         clienterror(fd, method, "501", "Not Implemented",
                     "Tiny does not implement this method");
         return;
@@ -83,6 +83,7 @@ void doit(int fd)
     //read_requesthdrs : buf 내용 중 첫줄만 읽어오고, 나머지는 출력만 한다.
     read_requesthdrs(&rio);                              //line:netp:doit:readrequesthdrs
 
+    
     /* Parse URI from GET request */
     //정적 컨텐츠를 요청하는지 여부 확인한다
     is_static = parse_uri(uri, filename, cgiargs);       //line:netp:doit:staticcheck
@@ -101,7 +102,7 @@ void doit(int fd)
                 "Tiny couldn't read the file");
             return;
 	}
-	serve_static(fd, filename, sbuf.st_size);        //line:netp:doit:servestatic
+	serve_static(fd, filename, sbuf.st_size, method);        //line:netp:doit:servestatic
     }
     else { /* Serve dynamic content */
 	if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) { //line:netp:doit:executable
@@ -153,13 +154,16 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
 	ptr = index(uri, '?');                           //line:netp:parseuri:beginextract
 	if (ptr) {
 	    strcpy(cgiargs, ptr+1);
-	    *ptr = '\0';
+	    *ptr = '\0';//이건 왜하는거지?
 	}
 	else 
 	    strcpy(cgiargs, "");                         //line:netp:parseuri:endextract
 	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert2
 	strcat(filename, uri);                           //line:netp:parseuri:endconvert2
-	return 0;
+    //filename : ./cgi-bin/adder
+    //uri : /cgi-bin/adder
+    printf("filename : %s\n uri : %s\n", filename, uri);
+    return 0;
     }
 }
 /* $end parse_uri */
@@ -168,7 +172,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
  * serve_static - copy a file back to the client 
  */
 /* $begin serve_static */
-void serve_static(int fd, char *filename, int filesize)
+void serve_static(int fd, char *filename, int filesize, char* method)
 {
     int srcfd;
     char *srcp, filetype[MAXLINE], buf[MAXBUF];
@@ -183,15 +187,22 @@ void serve_static(int fd, char *filename, int filesize)
     Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Content-type: %s\r\n\r\n", filetype);
     Rio_writen(fd, buf, strlen(buf));    //line:netp:servestatic:endserve
-
-    /* Send response body to client */
-    //읽기 전용으로 srcfd을 연다.
-    srcfd = Open(filename, O_RDONLY, 0); //line:netp:servestatic:open
-    //이미지 파일의 경우는 빠르게 수행하기 위해 mmap을 쓴다.
-    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); //line:netp:servestatic:mmap
-    Close(srcfd);                       //line:netp:servestatic:close
-    Rio_writen(fd, srcp, filesize);     //line:netp:servestatic:write
-    Munmap(srcp, filesize);             //line:netp:servestatic:munmap
+    // printf("method : %s\n", method);
+    // printf("method len : %d\n", strlen(method));
+    // printf("%d\n", strcasecmp(method, "GET"));
+    if(!(strcasecmp(method, "GET"))){
+        /* Send response body to client */
+        //읽기 전용으로 srcfd을 연다.
+        srcfd = Open(filename, O_RDONLY, 0); //line:netp:servestatic:open
+        //이미지 파일의 경우는 빠르게 수행하기 위해 mmap을 쓴다.
+        //srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); //line:netp:servestatic:mmap -> 특정 지점부터 특정 크기만큼 메모리 매핑을 커널에 요청
+        srcp = malloc(filesize); //line:netp:servestatic:mmap -> 특정 지점부터 특정 크기만큼 메모리 매핑을 커널에 요청
+        rio_readn(srcfd, srcp, filesize);
+        Close(srcfd);                       //line:netp:servestatic:close
+        Rio_writen(fd, srcp, filesize);     //line:netp:servestatic:write
+        //Munmap(srcp, filesize);             //line:netp:servestatic:munmap -> mmap한 내용을 unmap
+        free(srcp);             //line:netp:servestatic:munmap -> mmap한 내용을 unmap
+    }
 }
 
 /*
@@ -207,6 +218,8 @@ void get_filetype(char *filename, char *filetype)
 	strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
 	strcpy(filetype, "image/jpeg");
+    else if(strstr(filetype, "video/mp4"))
+    strcpy(filetype, "video/mp4");
     else
 	strcpy(filetype, "text/plain");
 }  
